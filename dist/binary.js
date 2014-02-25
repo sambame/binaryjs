@@ -1,4 +1,4 @@
-/*! binary.js build:0.1.8, development. Copyright(c) 2012 Eric Zhang <eric@ericzhang.com> MIT Licensed */
+/*! binary.js build:0.2.1, development. Copyright(c) 2012 Eric Zhang <eric@ericzhang.com> MIT Licensed */
 (function(exports){
 var binaryFeatures = {};
 binaryFeatures.useBlobBuilder = (function(){
@@ -45,13 +45,13 @@ BufferBuilder.prototype.append = function(data) {
   if(typeof data === 'number') {
     this._pieces.push(data);
   } else {
-    this._flush();
+    this.flush();
     this._parts.push(data);
   }
 };
 
-BufferBuilder.prototype._flush = function() {
-  if (this._pieces.length > 0) {    
+BufferBuilder.prototype.flush = function() {
+  if (this._pieces.length > 0) {
     var buf = new Uint8Array(this._pieces);
     if(!binaryFeatures.useArrayBufferView) {
       buf = buf.buffer;
@@ -62,7 +62,7 @@ BufferBuilder.prototype._flush = function() {
 };
 
 BufferBuilder.prototype.getBuffer = function() {
-  this._flush();
+  this.flush();
   if(binaryFeatures.useBlobBuilder) {
     var builder = new BlobBuilder();
     for(var i = 0, ii = this._parts.length; i < ii; i++) {
@@ -80,7 +80,8 @@ exports.BinaryPack = {
   },
   pack: function(data){
     var packer = new Packer();
-    var buffer = packer.pack(data);
+    packer.pack(data);
+    var buffer = packer.getBuffer();
     return buffer;
   }
 };
@@ -247,9 +248,9 @@ Unpacker.prototype.unpack_raw = function(size){
   }
   var buf = this.dataBuffer.slice(this.index, this.index + size);
   this.index += size;
-  
+
     //buf = util.bufferToString(buf);
-  
+
   return buf;
 }
 
@@ -322,9 +323,13 @@ Unpacker.prototype.read = function(length){
     throw new Error('BinaryPackFailure: read index out of range');
   }
 }
-  
-function Packer (){
+
+function Packer(){
   this.bufferBuilder = new BufferBuilder();
+}
+
+Packer.prototype.getBuffer = function(){
+  return this.bufferBuilder.getBuffer();
 }
 
 Packer.prototype.pack = function(value){
@@ -362,7 +367,7 @@ Packer.prototype.pack = function(value){
         }
       } else if ('BYTES_PER_ELEMENT' in value){
         if(binaryFeatures.useArrayBufferView) {
-          this.pack_bin(value);
+          this.pack_bin(new Uint8Array(value.buffer));
         } else {
           this.pack_bin(value.buffer);
         }
@@ -379,7 +384,7 @@ Packer.prototype.pack = function(value){
   } else {
     throw new Error('Type "' + type + '" not yet supported');
   }
-  return this.bufferBuilder.getBuffer();
+  this.bufferBuilder.flush();
 }
 
 
@@ -401,7 +406,8 @@ Packer.prototype.pack_bin = function(blob){
 }
 
 Packer.prototype.pack_string = function(str){
-  var length = str.length;
+  var length = utf8Length(str);
+
   if (length <= 0x0f){
     this.pack_uint8(0xb0 + length);
   } else if (length <= 0xffff){
@@ -564,6 +570,25 @@ Packer.prototype.pack_int64 = function(num){
   this.bufferBuilder.append((low  & 0x00ff0000) >>> 16);
   this.bufferBuilder.append((low  & 0x0000ff00) >>>  8);
   this.bufferBuilder.append((low  & 0x000000ff));
+}
+
+function _utf8Replace(m){
+  var code = m.charCodeAt(0);
+
+  if(code <= 0x7ff) return '00';
+  if(code <= 0xffff) return '000';
+  if(code <= 0x1fffff) return '0000';
+  if(code <= 0x3ffffff) return '00000';
+  return '000000';
+}
+
+function utf8Length(str){
+  if (str.length > 600) {
+    // Blob method faster for large strings
+    return (new Blob([str])).size;
+  } else {
+    return str.replace(/[^\u0000-\u007F]/g, _utf8Replace).length;
+  }
 }
 /**
  * Light EventEmitter. Ported from Node.js/events.js
@@ -1525,8 +1550,8 @@ BinaryClient.prototype.createStream = function(meta){
   return binaryStream;
 };
 
-BinaryClient.prototype.close = BinaryClient.prototype.destroy = function(code, message) {
-  this._socket.close(code, message);
+BinaryClient.prototype.close = BinaryClient.prototype.destroy = function() {
+  this._socket.close();
 };
 
 exports.BinaryClient = BinaryClient;
